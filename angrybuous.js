@@ -7,6 +7,12 @@ const editor = document.getElementById('angrybuous-edit-area');
 let allowedWords = new Set();
 let forbiddenWords = new Set();
 
+// throttling and debouncing
+let isThrottled = false;
+let isIdle = true;
+let idleTimeout = null;
+let censorPoll = null;
+
 function getWords() {
 	let matches = editor.value.match(/[a-z\-]+/ig);
 	return new Set(matches ? matches.map(word => word.toLowerCase()) : undefined);
@@ -19,11 +25,23 @@ function censorWord(word) {
 	editor.value = editor.value.replace(re, '???');
 }
 
-function censorAll() {
-	forbiddenWords.forEach(censorWord);
+function censorSynchronous() {
+	forbiddenWords.forEach(word => censorWord(word));
 }
 
 /* Check for disambiguation pages */
+
+function launchAsyncClassify() {
+	if (isThrottled) {
+		return;
+	}
+	
+	isThrottled = true;
+	classify(getWords());
+	setTimeout(function () {
+		isThrottled = false;
+	}, 800);
+}
 
 function classify(words) {
 	// leave only new words
@@ -79,24 +97,44 @@ function getDisambiguationTitle(word) {
 	return titleCaseWord + ' (disambiguation)';
 }
 
-// main function
-function disambiguate() {
-	classify(getWords())
-		.then(() => censorAll());
+// run censorship when done typing a word
+function finishWord() {
+	censorSynchronous();
+	launchAsyncClassify(); // classify new words to apply later
+}
+
+/* Apply asynchronous wordlist updates when user isn't typing */
+
+function setIdle() {
+	isIdle = true;
+	// it's a little silly to keep polling when nothing happens,
+	// but it's cheap and much simpler than keeping track of unfinished requests
+	clearInterval(censorPoll);
+	censorPoll = setInterval(function () { console.log('poll'); finishWord(); }, 400);
+}
+
+function setBusy() {
+	isIdle = false;
+	clearInterval(censorPoll);
+	clearTimeout(idleTimeout);
+	idleTimeout = setTimeout(setIdle, 1000);
 }
 
 /* Run on text changes */
 
-editor.addEventListener('blur', () => disambiguate());
+editor.addEventListener('focus', () => setBusy());
 
-editor.addEventListener('keyup', function (e) {
-	if (['.', '?', '!', 'Enter'].includes(e.key)) {
-		disambiguate();
+editor.addEventListener('blur', () => { finishWord(); setIdle(); });
+
+editor.addEventListener('input', function () {
+	if (editor.value.match(/[^a-z\-]$/i)) {
+		finishWord();
 	}
+	setBusy();
 });
 
 editor.addEventListener('paste', function () {
-	setTimeout(disambiguate); // run after paste
+	setTimeout(() => finishWord()); // run after paste
 });
 
 })();
